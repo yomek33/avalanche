@@ -1,12 +1,17 @@
-ARG ARCH="amd64"
-ARG OS="linux"
-FROM quay.io/prometheus/busybox-${OS}-${ARCH}:latest
-LABEL maintainer="The Prometheus Authors <prometheus-developers@googlegroups.com>"
+FROM golang:1.17 as builder
 
-ARG ARCH="amd64"
-ARG OS="linux"
-COPY .build/${OS}-${ARCH}/avalanche /bin/avalanche
+WORKDIR /app
 
-EXPOSE      9101
-USER        nobody
-ENTRYPOINT  [ "/bin/avalanche" ]
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /bin/avalanche ./cmd/avalanche.go
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates
+
+COPY --from=builder /bin/avalanche /bin/avalanche
+
+ENTRYPOINT ["/bin/avalanche"]
