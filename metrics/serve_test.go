@@ -23,19 +23,20 @@ func countSeries(t *testing.T, registry *prometheus.Registry) int {
 	return seriesCount
 }
 
-func TestRunMetricsSeriesCountChange(t *testing.T) {
+func TestRunMetricsSeriesCountChangeDoubleHalve(t *testing.T) {
 	const (
 		initialSeriesCount    = 5
 		metricCount           = 1
 		labelCount            = 1
 		seriesChangeRate      = 1
+		seriesSpike           = 0
 		metricLength          = 1
 		labelLength           = 1
 		valueInterval         = 1
 		seriesInterval        = 1
 		metricInterval        = 1
 		seriesChangeInterval  = 3
-		operationMode         = "series"
+		operationMode         = "double-halve"
 		constLabel            = "constLabel=test"
 		updateNotifyTimeout   = 3 * time.Second
 		waitTimeBetweenChecks = 3 * time.Second
@@ -46,7 +47,7 @@ func TestRunMetricsSeriesCountChange(t *testing.T) {
 
 	promRegistry = prometheus.NewRegistry()
 
-	updateNotify, err := RunMetrics(metricCount, labelCount, initialSeriesCount, seriesChangeRate, metricLength, labelLength, valueInterval, seriesInterval, metricInterval, seriesChangeInterval, operationMode, []string{constLabel}, stop)
+	updateNotify, err := RunMetrics(metricCount, labelCount, initialSeriesCount, seriesChangeRate, seriesSpike, metricLength, labelLength, valueInterval, seriesInterval, metricInterval, seriesChangeInterval, operationMode, []string{constLabel}, stop)
 	assert.NoError(t, err)
 
 	initialCount := countSeries(t, promRegistry)
@@ -74,15 +75,67 @@ func TestRunMetricsSeriesCountChange(t *testing.T) {
 	case <-time.After(updateNotifyTimeout):
 		t.Fatal("Did not receive update notification for series count halving in time")
 	}
+}
 
-	// Test for doubling the series count again
+func TestRunMetricsGradualChange(t *testing.T) {
+	const (
+		initialSeriesCount    = 30
+		metricCount           = 1
+		labelCount            = 1
+		seriesChangeRate      = -10
+		seriesSpike           = 0
+		metricLength          = 1
+		labelLength           = 1
+		valueInterval         = 1
+		seriesInterval        = 1
+		metricInterval        = 1
+		seriesChangeInterval  = 3
+		operationMode         = "gradual-change"
+		constLabel            = "constLabel=test"
+		updateNotifyTimeout   = 4 * time.Second
+		waitTimeBetweenChecks = 3 * time.Second
+	)
+
+	stop := make(chan struct{})
+	defer close(stop)
+
+	promRegistry = prometheus.NewRegistry()
+
+	updateNotify, err := RunMetrics(metricCount, labelCount, initialSeriesCount, seriesChangeRate, seriesSpike, metricLength, labelLength, valueInterval, seriesInterval, metricInterval, seriesChangeInterval, operationMode, []string{constLabel}, stop)
+	assert.NoError(t, err)
+
+	initialCount := countSeries(t, promRegistry)
+	expectedInitialCount := initialSeriesCount
+	assert.Equal(t, expectedInitialCount, initialCount, "Initial series count should be %d but got %d", expectedInitialCount, initialCount)
+
 	select {
 	case <-updateNotify:
 		time.Sleep(waitTimeBetweenChecks)
-		doubledAgainCount := countSeries(t, promRegistry)
-		expectedDoubledAgainCount := initialSeriesCount * 2
-		assert.Equal(t, expectedDoubledAgainCount, doubledAgainCount, "Doubled series count should be %d but got %d", expectedDoubledAgainCount, doubledAgainCount)
+		updatedCount := countSeries(t, promRegistry)
+		expectedCount := initialSeriesCount + seriesChangeRate - 1
+		assert.Equal(t, expectedCount, updatedCount, "1 Decreased series count should be %d but got %d", expectedCount, updatedCount)
 	case <-time.After(updateNotifyTimeout):
-		t.Fatal("Did not receive update notification for series count doubling again in time")
+		t.Fatal("Did not receive update notification for series count doubling in time")
+	}
+
+	select {
+	case <-updateNotify:
+		time.Sleep(waitTimeBetweenChecks)
+		updatedCount := countSeries(t, promRegistry)
+		expectedCount := initialSeriesCount + seriesChangeRate*2
+		assert.Equal(t, expectedCount, updatedCount, "2 Decreased series count should be %d but got %d", expectedCount, updatedCount)
+	case <-time.After(updateNotifyTimeout):
+		t.Fatal("Did not receive update notification for series count doubling in time")
+	}
+
+	// Test for the minimum value of the series is 1
+	select {
+	case <-updateNotify:
+		time.Sleep(waitTimeBetweenChecks)
+		updatedCount := countSeries(t, promRegistry)
+		expectedCount := 1
+		assert.Equal(t, expectedCount, updatedCount, "3 Decreased series count should be %d but got %d", expectedCount, updatedCount)
+	case <-time.After(updateNotifyTimeout):
+		t.Fatal("Did not receive update notification for series count doubling in time")
 	}
 }

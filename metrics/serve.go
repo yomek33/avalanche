@@ -140,7 +140,7 @@ func RunMetrics(metricCount, labelCount, seriesCount, seriesChangeRate, seriesSp
 	}()
 
 	go func() {
-		for tick := range updateSeriesTick.C {
+		for tick := range metricTick.C {
 			fmt.Printf("%v: refreshing metric cycle\n", tick)
 			metricsMux.Lock()
 			metricCycle++
@@ -155,34 +155,58 @@ func RunMetrics(metricCount, labelCount, seriesCount, seriesChangeRate, seriesSp
 		}
 	}()
 
-	seriesIncrease := true
-	go func() {
-		for tick := range metricTick.C {
-			fmt.Printf("%v: Adjusting series count. New count: %d\n", tick, seriesCount)
+	switch operationMode {
+	case "double-halve":
+		seriesIncrease := true
+		go func() {
+			for tick := range updateSeriesTick.C {
+				fmt.Printf("%v: Adjusting series count. New count: %d\n", tick, seriesCount)
 
-			metricsMux.Lock()
+				metricsMux.Lock()
 
-			if seriesIncrease {
-				seriesCount *= 2
-			} else {
-				seriesCount /= 2
+				if seriesIncrease {
+					seriesCount *= 2
+				} else {
+					seriesCount /= 2
+					if seriesCount < 1 {
+						seriesCount = 1
+					}
+				}
+
+				unregisterMetrics()
+				registerMetrics(metricCount, metricLength, metricCycle, labelKeys)
+				cycleValues(labelKeys, labelValues, seriesCount, seriesCycle)
+				metricsMux.Unlock()
+
+				seriesIncrease = !seriesIncrease
+				select {
+				case updateNotify <- struct{}{}:
+				default:
+				}
+			}
+		}()
+
+	case "gradual-change":
+		go func() {
+			for tick := range updateSeriesTick.C {
+				fmt.Printf("%v: Adjusting series count. New count: %d\n", tick, seriesCount)
+				metricsMux.Lock()
+				seriesCount += seriesChangeRate
 				if seriesCount < 1 {
 					seriesCount = 1
 				}
-			}
+				unregisterMetrics()
+				registerMetrics(metricCount, metricLength, metricCycle, labelKeys)
+				cycleValues(labelKeys, labelValues, seriesCount, seriesCycle)
+				metricsMux.Unlock()
 
-			unregisterMetrics()
-			registerMetrics(metricCount, metricLength, metricCycle, labelKeys)
-			cycleValues(labelKeys, labelValues, seriesCount, seriesCycle)
-			metricsMux.Unlock()
-
-			seriesIncrease = !seriesIncrease
-			select {
-			case updateNotify <- struct{}{}:
-			default:
+				select {
+				case updateNotify <- struct{}{}:
+				default:
+				}
 			}
-		}
-	}()
+		}()
+	}
 
 	go func() {
 		<-stop
