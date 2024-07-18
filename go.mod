@@ -1,6 +1,6 @@
 module github.com/prometheus-community/avalanche
 
-go 1.17
+go 1.21
 
 require (
 	github.com/alecthomas/units v0.0.0-20201120081800-1786d5ef83d4 // indirect
